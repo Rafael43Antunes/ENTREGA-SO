@@ -6,6 +6,35 @@
 
 #include "central.h"
 
+void encerra_tarifador(Tarifador *tar){
+    printf("[Central] A encerrar o sistema e a desligar o tarifador...\n");
+
+    close(tar->pipe_ct[1]);
+
+    close(tar->pipe_tc[0]);
+
+    waitpid(tar->pid, NULL, 0);
+
+    printf("[Central] Tarifador encerrado. Recursos libertados.\n");
+}
+
+void simula_pedido(Tarifador *tar, const char *origem, const char *destino, float peso) {
+    char mensagem_envio[150];
+    char resposta[100];
+
+    snprintf(mensagem_envio, sizeof(mensagem_envio), "%s %s %.2f\n", origem, destino, peso);
+    
+    // Escreve no pipe
+    write(tar->pipe_ct[1], mensagem_envio, strlen(mensagem_envio));
+    
+    // Lê a resposta do pipe
+    int lidos = read(tar->pipe_tc[0], resposta, sizeof(resposta) - 1);
+    if (lidos > 0) {
+        resposta[lidos] = '\0';
+        printf("[Debug] Resultado da tarifa: %s", resposta);
+    }
+}
+
 void inicia_tarifador(Tarifador *tar){
     // Criar os pipes
     if(pipe(tar->pipe_ct) == -1){
@@ -50,27 +79,12 @@ void inicia_tarifador(Tarifador *tar){
         printf("[Central] Tarifador arrancou com PID %d.\n", tar->pid);
 
 
-        // --- INÍCIO DO NOSSO TESTE ---
-        char mensagem_envio[] = "restaurante_ze isec 2.4\n";
-        char resposta[100];
-
-        // A Central escreve no tubo de ida (Central -> Tarifador)
-        write(tar->pipe_ct[1], mensagem_envio, sizeof(mensagem_envio) - 1);
-        printf("[Central] Enviei para o tarifador: %s", mensagem_envio);
-
-        // A Central lê do tubo de volta (Tarifador -> Central)
-        int lidos = read(tar->pipe_tc[0], resposta, sizeof(resposta) - 1);
-        if (lidos > 0) {
-            resposta[lidos] = '\0'; 
-            printf("[Central] O Tarifador respondeu: %s", resposta);
-        }
-        // --- FIM DO NOSSO TESTE ---
-
     }
 }
 
-int main(){
+int main(int argc, char *argv[]){
     Tarifador tar;
+    ConfigCentral config;
 
     printf("[Central] A iniciar sistema ...\n");
     
@@ -133,6 +147,46 @@ int main(){
 
     inicia_tarifador(&tar);
 
+    char linha[256];
+    char comando[50];
+
+    printf("\nSistema pronto. Aguardando comandos...\n");
+
+    while (1) {
+        printf("central> ");
+        
+        if (fgets(linha, sizeof(linha), stdin) == NULL) {
+            break;
+        }
+
+        if (sscanf(linha, "%s", comando) != 1) {
+            continue; // Se o utilizador apenas carregou no Enter, ignora
+        }
+
+        // --- VALIDAÇÃO DOS COMANDOS ---
+        if (strcmp(comando, "encerra") == 0) {
+            encerra_tarifador(&tar);
+            break; 
+            
+        } else if (strcmp(comando, "pedido") == 0) {
+            char origem[50], destino[50];
+            float peso;
+            
+            if (sscanf(linha, "pedido %49s %49s %f", origem, destino, &peso) == 3) {
+                simula_pedido(&tar, origem, destino, peso);
+            } else {
+                printf("[Erro] Sintaxe incorreta. Uso: pedido <origem> <destino> <peso>\n");
+            }
+            
+        } else if (strcmp(comando, "stats") == 0) {
+            printf("[Stats] Totais desde o arranque: a implementar...\n");
+            
+        } else {
+            printf("[Erro] Comando desconhecido.\n");
+        }
+    }
+
+   
     sleep(2);
 
     return 0;
