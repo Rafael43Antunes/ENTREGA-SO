@@ -60,7 +60,7 @@ void inicia_tarifador(Tarifador *tar){
         // A Central lê do tubo de volta (Tarifador -> Central)
         int lidos = read(tar->pipe_tc[0], resposta, sizeof(resposta) - 1);
         if (lidos > 0) {
-            resposta[lidos] = '\0'; // Colocar o terminador de string do C
+            resposta[lidos] = '\0'; 
             printf("[Central] O Tarifador respondeu: %s", resposta);
         }
         // --- FIM DO NOSSO TESTE ---
