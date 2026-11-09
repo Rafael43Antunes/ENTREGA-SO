@@ -7,6 +7,8 @@
 #define DEFAULT_MAXESTAFETAS 10
 #define DEFAULT_PRAZOACEITA 30
 
+#define FICHEIRO_LOCK "central.lock"
+
 typedef struct{
     int pipe_ct[2]; //pipe direção central - tarifador, ou seja, central escreve (1) tarifador lê (0)
     int pipe_tc[2]; //pipe direção tarifador - central, ou seka, tarifador escreve (1) central lê (0)
@@ -36,6 +38,6 @@ typedef struct {
     char corpo[50]; 
 } MsgPedido;
 
-void inicia_tarifador(Tarifador *tar);
+void inicia_tarifador(Tarifador *tar, const char *bindir);
 
 #endif // CENTRAL_H

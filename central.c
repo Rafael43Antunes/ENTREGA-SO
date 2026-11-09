@@ -10,49 +10,59 @@
 #include "central.h"
 
 Tarifador *ptr_tar_sinal = NULL;
-char *ptr_pipe_sinal = NULL;
+//char *ptr_pipe_sinal = NULL;
 
-void encerra_tarifador(Tarifador *tar, const char *nome_pipe);
-
-void trata_sigint(int signum) {
-    printf("\n[Sinal] Capturado o sinal SIGINT (Ctrl+C). A forcar encerramento...\n");
-    
-    if (ptr_tar_sinal != NULL && ptr_pipe_sinal != NULL) {
-        encerra_tarifador(ptr_tar_sinal, ptr_pipe_sinal);
-    }
-    
-    exit(EXIT_SUCCESS);
-}
-
-void encerra_tarifador(Tarifador *tar, const char *nome_pipe){
+void encerra_tarifador(Tarifador *tar){
     printf("[Central] A encerrar o sistema e a desligar o tarifador...\n");
 
     close(tar->pipe_ct[1]);
     close(tar->pipe_tc[0]);
     waitpid(tar->pid, NULL, 0);
 
-    if(unlink(nome_pipe) == 0){
-        printf("[Central] Named pipe '%s' apagado.\n", nome_pipe);
-    }else if(unlink("central.lock") == 0) {
+    if(unlink(FICHEIRO_LOCK) == 0){
         printf("[Central] Ficheiro de lock apagado.\n");
     }else {
-        perror("[Aviso] Nao foi possivel apagar o named pipe");
+        perror("[Aviso] Nao foi possivel apagar o ficheiro de lock");
     }
 
     printf("[Central] Tarifador encerrado. Recursos libertados.\n");
 }
 
-void simula_pedido(Tarifador *tar, ConfigCentral *config, const char *origem, const char *destino, float peso) {
+void trata_sigint(int signum) {
+    printf("\n[Sinal] Capturado o sinal SIGINT (Ctrl+C). A forcar encerramento...\n");
+    
+    if (ptr_tar_sinal != NULL) {
+        encerra_tarifador(ptr_tar_sinal);
+    }
+    
+    exit(EXIT_SUCCESS);
+}
+
+
+
+int simula_pedido(Tarifador *tar, ConfigCentral *config, const char *origem, const char *destino, float peso) {
     char mensagem_envio[150];
     char resposta[100];
 
     snprintf(mensagem_envio, sizeof(mensagem_envio), "%s %s %.2f\n", origem, destino, peso);
     
     // Escreve no pipe
-    write(tar->pipe_ct[1], mensagem_envio, strlen(mensagem_envio));
+    if (write(tar->pipe_ct[1], mensagem_envio, strlen(mensagem_envio)) == -1) {
+        perror("[Erro] Falha ao escrever no tarifador");
+        return -1;
+    }
     
     // Lê a resposta do pipe
     int lidos = read(tar->pipe_tc[0], resposta, sizeof(resposta) - 1);
+    if (lidos == -1) {
+        perror("[Erro] Falha ao ler do tarifador");
+        return -1;
+    }
+    if (lidos == 0) { 
+        fprintf(stderr, "[Erro] O tarifador terminou inesperadamente.\n");
+        return -1;
+    }
+
     if (lidos > 0) {
         resposta[lidos] = '\0';
         printf("[Debug] Resultado da tarifa: %s", resposta);
@@ -63,18 +73,32 @@ void simula_pedido(Tarifador *tar, ConfigCentral *config, const char *origem, co
             config->total_concluidos++;
             config->valor_total += valor;
         }
+
+        return 0;
     }
 }
 
-void inicia_tarifador(Tarifador *tar){
+void inicia_tarifador(Tarifador *tar, const char *bindir){
+    char caminho[256];
+    int n = snprintf(caminho, sizeof(caminho), "%s/tarifador", bindir);
+    if(n < 0 || n >= (int)sizeof(caminho)){
+        fprintf(stderr, "[Erro] BINDIR demasiado longo.\n");
+        unlink(FICHEIRO_LOCK);
+        exit(EXIT_FAILURE);
+    }
+
     // Criar os pipes
     if(pipe(tar->pipe_ct) == -1){
         perror("[Erro] Falha ao criar o pipe_ct");
+        unlink(FICHEIRO_LOCK);
         exit(EXIT_FAILURE);
     }
 
     if(pipe(tar->pipe_tc) == -1){
        perror("[Erro] Falha ao criar o pipe_tc");
+       close(tar->pipe_ct[0]);
+       close(tar->pipe_ct[1]);
+       unlink(FICHEIRO_LOCK);
         exit(EXIT_FAILURE); 
     }
 
@@ -82,6 +106,11 @@ void inicia_tarifador(Tarifador *tar){
 
     if(tar->pid == -1){
         perror("[Erro] Falha ao executar o fork");
+        close(tar->pipe_ct[0]);
+        close(tar->pipe_ct[1]);
+        close(tar->pipe_tc[0]);
+        close(tar->pipe_tc[1]);
+        unlink(FICHEIRO_LOCK);
         exit(EXIT_FAILURE);
     }
 
@@ -97,7 +126,7 @@ void inicia_tarifador(Tarifador *tar){
         close(tar->pipe_ct[0]);
         close(tar->pipe_tc[1]);
 
-        execl("./tarifador", "tarifador", NULL);
+        execl(caminho, "tarifador", NULL);
 
         perror("[Erro] Falha ao executar o tarifador");
         exit(EXIT_FAILURE);
@@ -157,7 +186,7 @@ int main(int argc, char *argv[]){
     }
 
 
-    for (int i; i < argc; i++){
+    for (int i = 1; i < argc; i++){
         if(strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
             config.max_estafetas = atoi(argv[i + 1]);
             i++;
@@ -182,18 +211,18 @@ int main(int argc, char *argv[]){
 
     int fd_lock = open("central.lock", O_CREAT | O_EXCL, 0666);
     if (fd_lock == -1) {
-        fprintf(stderr, "[Erro] A Central ja esta a correr ou o ficheiro '%s' ficou pendurado.\n", config.central_pipe);
+        fprintf(stderr, "[Erro] A Central ja esta a correr ou o ficheiro '%s' ficou pendurado.\n", FICHEIRO_LOCK);
         exit(EXIT_FAILURE);
     }
     close(fd_lock);
 
-    printf("[Central] Ficheiro de bloqueio '%s' criado com sucesso.\n", config.central_pipe);
+    printf("[Central] Ficheiro de bloqueio '%s' criado com sucesso.\n", FICHEIRO_LOCK);
+
+    inicia_tarifador(&tar, config.bindir);
 
     ptr_tar_sinal = &tar;
-    ptr_pipe_sinal = config.central_pipe;
     signal(SIGINT, trata_sigint);
 
-    inicia_tarifador(&tar);
 
     char linha[256];
     char comando[50];
@@ -207,13 +236,12 @@ int main(int argc, char *argv[]){
             break;
         }
 
-        if (sscanf(linha, "%s", comando) != 1) {
+        if (sscanf(linha, "%49s", comando) != 1) {
             continue; // Se o utilizador apenas carregou no Enter, ignora
         }
 
         // --- VALIDAÇÃO DOS COMANDOS ---
         if (strcmp(comando, "encerra") == 0) {
-            encerra_tarifador(&tar, config.central_pipe);
             break; 
             
         } else if (strcmp(comando, "pedido") == 0) {
@@ -221,7 +249,11 @@ int main(int argc, char *argv[]){
             float peso;
             
             if (sscanf(linha, "pedido %49s %49s %f", origem, destino, &peso) == 3) {
-                simula_pedido(&tar, &config, origem, destino, peso);
+
+                if (simula_pedido(&tar, &config, origem, destino, peso) == -1) {
+                    printf("[Erro] Tarifador indisponivel. A encerrar a central.\n");
+                    break;
+                }
             } else {
                 printf("[Erro] Sintaxe incorreta. Uso: pedido <origem> <destino> <peso>\n");
             }
@@ -241,7 +273,7 @@ int main(int argc, char *argv[]){
     }
 
    
-    sleep(2);
+    encerra_tarifador(&tar);
 
     return 0;
 }
