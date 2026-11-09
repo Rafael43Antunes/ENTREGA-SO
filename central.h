@@ -1,9 +1,9 @@
 #ifndef CENTRAL_H
 #define CENTRAL_H
 
-#include <sys/types.h> //para o pipe
+#include <sys/types.h>
 
-// Constantes com os valores por omissão
+
 #define DEFAULT_MAXESTAFETAS 10
 #define DEFAULT_PRAZOACEITA 30
 
@@ -17,20 +17,23 @@ typedef struct{
 typedef struct {
     int max_estafetas;
     int prazo_aceita;
-    char *bindir;         // Diretoria onde está o tarifador
-    char *central_pipe;   // Nome do named pipe da central
+    char *bindir;        
+    char *central_pipe; 
+    
+    int total_pedidos;
+    int total_concluidos;
+    float valor_total;
 } ConfigCentral;
 
 // 3. Estruturas das mensagens
-// O enunciado pede um campo de tipo comum a todas as mensagens com 12 caracteres.
 typedef struct {
     char tipo[12];
 } MsgGenerica;
 
-// Estrutura obrigatória do pedido gerado (Enunciado Secção 4.1)
+// Estrutura obrigatória do pedido gerado
 typedef struct {
-    char tipo[12];  /* contém sempre "pedido" */
-    char corpo[50]; /* dados separados por espaços: <id> <origem> <destino> <peso> */
+    char tipo[12];  
+    char corpo[50]; 
 } MsgPedido;
 
 void inicia_tarifador(Tarifador *tar);

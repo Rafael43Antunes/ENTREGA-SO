@@ -3,22 +3,46 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <string.h>
+#include <sys/stat.h> 
+#include <fcntl.h>
+#include <signal.h>
 
 #include "central.h"
 
-void encerra_tarifador(Tarifador *tar){
+Tarifador *ptr_tar_sinal = NULL;
+char *ptr_pipe_sinal = NULL;
+
+void encerra_tarifador(Tarifador *tar, const char *nome_pipe);
+
+void trata_sigint(int signum) {
+    printf("\n[Sinal] Capturado o sinal SIGINT (Ctrl+C). A forcar encerramento...\n");
+    
+    if (ptr_tar_sinal != NULL && ptr_pipe_sinal != NULL) {
+        encerra_tarifador(ptr_tar_sinal, ptr_pipe_sinal);
+    }
+    
+    exit(EXIT_SUCCESS);
+}
+
+void encerra_tarifador(Tarifador *tar, const char *nome_pipe){
     printf("[Central] A encerrar o sistema e a desligar o tarifador...\n");
 
     close(tar->pipe_ct[1]);
-
     close(tar->pipe_tc[0]);
-
     waitpid(tar->pid, NULL, 0);
+
+    if(unlink(nome_pipe) == 0){
+        printf("[Central] Named pipe '%s' apagado.\n", nome_pipe);
+    }else if(unlink("central.lock") == 0) {
+        printf("[Central] Ficheiro de lock apagado.\n");
+    }else {
+        perror("[Aviso] Nao foi possivel apagar o named pipe");
+    }
 
     printf("[Central] Tarifador encerrado. Recursos libertados.\n");
 }
 
-void simula_pedido(Tarifador *tar, const char *origem, const char *destino, float peso) {
+void simula_pedido(Tarifador *tar, ConfigCentral *config, const char *origem, const char *destino, float peso) {
     char mensagem_envio[150];
     char resposta[100];
 
@@ -32,6 +56,13 @@ void simula_pedido(Tarifador *tar, const char *origem, const char *destino, floa
     if (lidos > 0) {
         resposta[lidos] = '\0';
         printf("[Debug] Resultado da tarifa: %s", resposta);
+
+        float distancia, valor;
+        if(sscanf(resposta, "%f %f", &distancia, &valor) == 2){
+            config->total_pedidos++;
+            config->total_concluidos++;
+            config->valor_total += valor;
+        }
     }
 }
 
@@ -95,6 +126,11 @@ int main(int argc, char *argv[]){
     config.prazo_aceita = DEFAULT_PRAZOACEITA;
     config.bindir = "."; // Diretoria atual por omissão
     config.central_pipe = NULL;
+
+    config.total_pedidos = 0;
+    config.total_concluidos = 0;
+    config.valor_total = 0.0;
+
     
     // 2. Obter variáveis de ambiente
     char *env_max = getenv("MAXESTAFETAS");
@@ -113,27 +149,26 @@ int main(int argc, char *argv[]){
     }
 
     char *env_pipe = getenv("CENTRAL_PIPE");
-    if (env_pipe != NULL) {
+    if (env_pipe != NULL){
         config.central_pipe = env_pipe;
     } else {
-        // Obrigatório: se falhar a leitura, abortar.
-        fprintf(stderr, "Erro: A variavel de ambiente CENTRAL_PIPE e obrigatoria.\n");
+        fprintf(stderr, "[Erro] A variavel de ambiente CENTRAL_PIPE e obrigatoria.\n");
         exit(EXIT_FAILURE);
     }
 
-    // 3. Obter argumentos da linha de comandos (-m e -p)
-    int opt;
-    while((opt = getopt(argc, argv, "m:p:")) != -1){
-        switch (opt){
-            case 'm':
-                config.max_estafetas = atoi(optarg);
-                break;
-            case 'p':
-                config.prazo_aceita = atoi(optarg);
-                break;
-            default:
-                fprintf(stderr, "Uso: %s [-m max_estafetas] [-p prazo_aceita]\n", argv[0]);
-                exit(EXIT_FAILURE);
+
+    for (int i; i < argc; i++){
+        if(strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
+            config.max_estafetas = atoi(argv[i + 1]);
+            i++;
+        }
+        else if(strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+            config.prazo_aceita = atoi(argv[i + 1]);
+            i++;
+        } 
+        else {
+            fprintf(stderr, "Uso: %s [-m max_estafetas] [-p prazo_aceita]\n", argv[0]);
+            exit(EXIT_FAILURE);
         }
     }
 
@@ -144,6 +179,19 @@ int main(int argc, char *argv[]){
     printf("Diretoria Tarifador: %s\n", config.bindir);
     printf("Named Pipe Central: %s\n", config.central_pipe);
     printf("=============================\n");
+
+    int fd_lock = open("central.lock", O_CREAT | O_EXCL, 0666);
+    if (fd_lock == -1) {
+        fprintf(stderr, "[Erro] A Central ja esta a correr ou o ficheiro '%s' ficou pendurado.\n", config.central_pipe);
+        exit(EXIT_FAILURE);
+    }
+    close(fd_lock);
+
+    printf("[Central] Ficheiro de bloqueio '%s' criado com sucesso.\n", config.central_pipe);
+
+    ptr_tar_sinal = &tar;
+    ptr_pipe_sinal = config.central_pipe;
+    signal(SIGINT, trata_sigint);
 
     inicia_tarifador(&tar);
 
@@ -165,7 +213,7 @@ int main(int argc, char *argv[]){
 
         // --- VALIDAÇÃO DOS COMANDOS ---
         if (strcmp(comando, "encerra") == 0) {
-            encerra_tarifador(&tar);
+            encerra_tarifador(&tar, config.central_pipe);
             break; 
             
         } else if (strcmp(comando, "pedido") == 0) {
@@ -173,13 +221,19 @@ int main(int argc, char *argv[]){
             float peso;
             
             if (sscanf(linha, "pedido %49s %49s %f", origem, destino, &peso) == 3) {
-                simula_pedido(&tar, origem, destino, peso);
+                simula_pedido(&tar, &config, origem, destino, peso);
             } else {
                 printf("[Erro] Sintaxe incorreta. Uso: pedido <origem> <destino> <peso>\n");
             }
             
         } else if (strcmp(comando, "stats") == 0) {
-            printf("[Stats] Totais desde o arranque: a implementar...\n");
+            printf("\n--- ESTATISTICAS ---\n");
+            printf("Pedidos recebidos: %d\n", config.total_pedidos);
+            printf("Pedidos atribuidos: %d\n", config.total_concluidos);
+            printf("Pedidos concluidos: %d\n", config.total_concluidos);
+            printf("Pedidos expirados/perdidos: 0\n"); 
+            printf("Valor total das entregas: %.2f euros\n", config.valor_total);
+            printf("--------------------\n");
             
         } else {
             printf("[Erro] Comando desconhecido.\n");
