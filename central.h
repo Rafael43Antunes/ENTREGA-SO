@@ -38,6 +38,22 @@ typedef struct {
     char corpo[50]; 
 } MsgPedido;
 
+typedef struct {
+    char tipo[12];
+    int codigo_status;
+    char info[50];
+} MsgResposta;
+
+typedef struct {
+    char nome_pipe_central[256];
+} ConfigEstafeta;
+
+typedef struct {
+    char tipo[12];
+    char nome[50];
+    pid_t pid;
+} RegistoEst;
+
 void inicia_tarifador(Tarifador *tar, const char *bindir);
 
 #endif // CENTRAL_H

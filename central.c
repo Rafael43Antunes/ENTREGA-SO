@@ -63,19 +63,19 @@ int simula_pedido(Tarifador *tar, ConfigCentral *config, const char *origem, con
         return -1;
     }
 
-    if (lidos > 0) {
-        resposta[lidos] = '\0';
-        printf("[Debug] Resultado da tarifa: %s", resposta);
+    
+    resposta[lidos] = '\0';
+    printf("[Debug] Resultado da tarifa: %s", resposta);
 
-        float distancia, valor;
-        if(sscanf(resposta, "%f %f", &distancia, &valor) == 2){
-            config->total_pedidos++;
-            config->total_concluidos++;
-            config->valor_total += valor;
-        }
-
-        return 0;
+    float distancia, valor;
+    if(sscanf(resposta, "%f %f", &distancia, &valor) == 2){
+        config->total_pedidos++;
+        config->total_concluidos++;
+        config->valor_total += valor;
     }
+
+    return 0;
+    
 }
 
 void inicia_tarifador(Tarifador *tar, const char *bindir){
@@ -129,7 +129,7 @@ void inicia_tarifador(Tarifador *tar, const char *bindir){
         execl(caminho, "tarifador", NULL);
 
         perror("[Erro] Falha ao executar o tarifador");
-        exit(EXIT_FAILURE);
+        _exit(EXIT_FAILURE);
     }
 
     else{
@@ -209,7 +209,7 @@ int main(int argc, char *argv[]){
     printf("Named Pipe Central: %s\n", config.central_pipe);
     printf("=============================\n");
 
-    int fd_lock = open("central.lock", O_CREAT | O_EXCL, 0666);
+    int fd_lock = open(FICHEIRO_LOCK, O_CREAT | O_EXCL, 0666);
     if (fd_lock == -1) {
         fprintf(stderr, "[Erro] A Central ja esta a correr ou o ficheiro '%s' ficou pendurado.\n", FICHEIRO_LOCK);
         exit(EXIT_FAILURE);
@@ -222,6 +222,8 @@ int main(int argc, char *argv[]){
 
     ptr_tar_sinal = &tar;
     signal(SIGINT, trata_sigint);
+
+    signal(SIGPIPE, SIG_IGN);
 
 
     char linha[256];
